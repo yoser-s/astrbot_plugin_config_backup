@@ -1,0 +1,6 @@
+name: astrbot_plugin_config_backup
+display_name: 配置定时备份
+desc: 定时把 AstrBot 核心配置（cmd_config.json）与插件配置（data/config/*.json）打包成 zip，按份数自动清理旧备份，支持管理员手动触发。
+version: v0.1.0
+author: yoser-s
+repo: https://github.com/yoser-s/astrbot_plugin_config_backup

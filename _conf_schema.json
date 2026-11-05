@@ -1,0 +1,37 @@
+{
+  "enabled": {
+    "description": "启用插件",
+    "type": "bool",
+    "default": true
+  },
+  "interval_hours": {
+    "description": "备份间隔（小时）",
+    "hint": "每隔多少小时自动备份一次，最小 0.05 小时（3 分钟）",
+    "type": "float",
+    "default": 6
+  },
+  "keep_count": {
+    "description": "保留份数",
+    "hint": "只保留最近 N 份备份，超出的自动删除",
+    "type": "int",
+    "default": 30
+  },
+  "backup_on_start": {
+    "description": "启动时先备份一次",
+    "hint": "加载插件 30 秒后先做一次备份，避免等第一个周期",
+    "type": "bool",
+    "default": true
+  },
+  "include_db": {
+    "description": "同时备份数据库",
+    "hint": "勾选后把 data_v4.db（对话记录、记忆库）一起打包，使用 SQLite 在线备份，不会拷到写了一半的库",
+    "type": "bool",
+    "default": false
+  },
+  "include": {
+    "description": "备份文件范围",
+    "hint": "相对 data 目录的 glob 模式",
+    "type": "list",
+    "default": ["cmd_config.json", "config/*.json"]
+  }
+}
