@@ -159,33 +159,6 @@ rm -rf config && cp -a config.before-restore config
 docker start astrbot
 ```
 
-### 完整的一键脚本参考
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-DATA=/vol1/1000/docker/astrbot/data
-ZIP="$1"   # 例如 backups/config/config-20261105-085850.zip
-
-[ -f "$DATA/$ZIP" ] || { echo "找不到备份: $DATA/$ZIP"; exit 1; }
-
-docker stop astrbot
-cd "$DATA"
-cp -a cmd_config.json "cmd_config.json.before-restore-$(date +%H%M%S)"
-unzip -o "$ZIP"
-rm -f data_v4.db-wal data_v4.db-shm
-docker start astrbot
-sleep 30
-docker logs astrbot --since 1m 2>&1 | grep -E "AstrBot v|WebUI is ready" || true
-```
-
-用法：
-
-```bash
-sudo bash restore-config.sh backups/config/config-20261105-085850.zip
-```
-
 ## 为什么恢复要停容器，而不是让插件自己恢复
 
 插件运行在 AstrBot 进程内部，它没有能力停掉自己所在的容器。除非把宿主机的 Docker socket 挂进容器（等于给容器宿主机 root 权限），否则无法做到「点一下就自动恢复」。
