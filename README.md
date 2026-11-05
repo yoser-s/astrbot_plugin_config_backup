@@ -9,7 +9,9 @@
 ## 功能
 
 - 定时打包 `data/cmd_config.json` 与 `data/config/*.json`（每个插件的独立配置）
-- 可选把 `data_v4.db`（对话记录、记忆库）一起备份，使用 SQLite 官方在线备份接口，不会拷到写了一半的库
+- 默认对密钥类字段脱敏（`api_key`、`token`、`secret`、`password` 等替换为 `***REDACTED***`），再打包
+- 可选开启「备份敏感信息」，完整备份原始配置；仅在开启后才允许一起备份 `data_v4.db`（对话记录、记忆库）
+- 数据库使用 SQLite 官方在线备份接口，不会拷到写了一半的库
 - 原子写入：先写 `.zip.tmp`，完成后再改名，中途失败不会留下半个包
 - 按份数轮转，自动删除最旧的备份
 - 启动 30 秒后先备份一次，避免等第一个周期
@@ -41,10 +43,21 @@ WebUI → 插件 → astrbot_plugin_config_backup → 配置：
 | 备份间隔（小时） | float | `6` | 最小 0.05（3 分钟）。改完从下一轮开始重新计时 |
 | 保留份数 | int | `30` | 只保留最近 N 份，超出的按修改时间删除 |
 | 启动时先备份一次 | bool | `true` | 加载插件 30 秒后立刻备份 |
-| 同时备份数据库 | bool | `false` | 勾选后把 `data_v4.db` 一起打包 |
+| 备份敏感信息 | bool | `false` | 关闭时密钥类字段被替换为 `***REDACTED***`，且不打包数据库；开启后完整备份明文配置 |
+| 同时备份数据库 | bool | `false` | 勾选后把 `data_v4.db` 一起打包。仅在开启「备份敏感信息」时生效 |
 | 备份文件范围 | list | `["cmd_config.json", "config/*.json"]` | 相对 `data` 目录的 glob 模式 |
 
 也可以通过直接编辑 `data/config/astrbot_plugin_config_backup_config.json` 修改，改完需要重启 AstrBot。
+
+### 敏感信息
+
+`cmd_config.json` 里有模型 API Key、`jwt_secret`、搜索 Key 等；`data_v4.db` 里是完整的对话记录和记忆库。默认策略是**脱敏后再备份**：
+
+- 字段名按分隔符切分，命中 `key` / `apikey` / `token` / `secret` / `password` / `cookie` / `credential` 等词的字符串值会被替换成 `***REDACTED***`，JSON 结构保持完整
+- 数字类型的字段不脱敏，避免误伤 `token_limit`、`max_tokens` 这类计数
+- 未开启「备份敏感信息」时，`data_v4.db` 会被跳过，日志里会说明跳过原因
+
+开启「备份敏感信息」后，备份是**明文**的，所以插件会把备份目录权限设为 `700`、zip 文件设为 `600`。即便如此，也请自行确认备份目录不会被同步到网盘、不会被其他容器读取。脱敏备份不能直接恢复出可用的机器人——`api_key`、`jwt_secret` 等需要重新填写；如果要能原样恢复，必须开启这个开关。
 
 ### 关于体积
 
@@ -63,9 +76,9 @@ WebUI → 插件 → astrbot_plugin_config_backup → 配置：
 ## 文件位置
 
 ```
-$ASTRBOT_DATA/backups/config/
-├── config-20261105-085128.zip   # 仅配置，约 45 KB
-└── config-20261105-085850.zip   # 含数据库，约 20 MB
+$ASTRBOT_DATA/plugin_data/astrbot_plugin_config_backup/backups/
+├── config-20261105-085128.zip   # 脱敏配置，约 45 KB
+└── config-20261105-085850.zip   # 开启敏感信息后，含数据库，约 20 MB
 ```
 
 zip 内部保持相对路径，直接解压回 `data` 目录即可：
@@ -94,8 +107,15 @@ CONTAINER=astrbot                   # 换成你的容器名
 ### 1. 先查看有哪些备份
 
 ```bash
-ls -la --time-style=full-iso "$ASTRBOT_DATA/backups/config/"
+ls -la --time-style=full-iso "$ASTRBOT_DATA/plugin_data/astrbot_plugin_config_backup/backups/"
 ```
+
+> 从旧版本升级时，历史备份可能还在 `$ASTRBOT_DATA/backups/config/`，可以手动移过去：
+>
+> ```bash
+> mkdir -p "$ASTRBOT_DATA/plugin_data/astrbot_plugin_config_backup/backups"
+> mv "$ASTRBOT_DATA/backups/config/"*.zip "$ASTRBOT_DATA/plugin_data/astrbot_plugin_config_backup/backups/"
+> ```
 
 ### 2. 停容器
 
@@ -123,15 +143,17 @@ cp -a config config.before-restore
 
 ```bash
 cd "$ASTRBOT_DATA"
-unzip -o backups/config/config-20261105-085850.zip
+unzip -o plugin_data/astrbot_plugin_config_backup/backups/config-20261105-085850.zip
 ```
 
 只想恢复某一个文件时，单独解压即可，例如只恢复核心配置：
 
 ```bash
 cd "$ASTRBOT_DATA"
-unzip -o backups/config/config-20261105-085850.zip cmd_config.json
+unzip -o plugin_data/astrbot_plugin_config_backup/backups/config-20261105-085850.zip cmd_config.json
 ```
+
+> 如果这份备份是**脱敏**的（默认设置），解压后 `cmd_config.json` 里的 `api_key`、`jwt_secret` 等是 `***REDACTED***`，AstrBot 起来后需要重新填这些值，否则模型和 WebUI 登录都不可用。要恢复成可直接使用的配置，请先打开「备份敏感信息」并重新生成一份备份。
 
 ### 5. 如果恢复了数据库，清理残留的 WAL 文件
 
@@ -187,6 +209,8 @@ astrbot_plugin_config_backup/
 ## 已知限制
 
 - 备份的是配置文件，不包含 `data/plugin_data/` 下各插件自己写的业务数据（除非你在「备份文件范围」里显式加上对应 glob）
+- 开启「备份敏感信息」后，备份文件是明文，含 API Key 与完整对话记录；插件只把目录设为 `700`、文件设为 `600`，不提供加密。请勿把备份目录同步到公共网盘或分享给他人
+- 默认脱敏模式不能直接恢复成可用状态，`api_key`、`jwt_secret` 需要重新填写
 - 数据库备份耗时会随库体积增长，50 MB 大约需要几秒
 - 容器被重建不会丢备份（备份目录在 `data` 卷内），但**容器重建会回滚版本**，恢复配置并不能把代码版本一起还原。版本问题请先用源码或镜像 tag 修好，再恢复配置
 

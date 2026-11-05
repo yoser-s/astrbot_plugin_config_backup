@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import re
 import shutil
 import sqlite3
 import zipfile
@@ -12,10 +15,37 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.event.filter import PermissionType, command, permission_type
 from astrbot.api.star import Context, Star
 
+PLUGIN_NAME = "astrbot_plugin_config_backup"
 DATA_DIR = Path(__file__).resolve().parents[2]
-BACKUP_DIR = DATA_DIR / "backups" / "config"
+BACKUP_DIR = DATA_DIR / "plugin_data" / PLUGIN_NAME / "backups"
 DB_PATH = DATA_DIR / "data_v4.db"
 TAG = "[config_backup]"
+
+REDACTED = "***REDACTED***"
+SENSITIVE_PARTS = {
+    "apikey", "key", "token", "secret", "password", "passwd", "pwd",
+    "cookie", "credential", "credentials",
+}
+
+
+def _is_sensitive_key(name: str) -> bool:
+    parts = re.split(r"[^a-z0-9]+", str(name).lower())
+    return any(p in SENSITIVE_PARTS for p in parts)
+
+
+def _redact(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if isinstance(v, str) and v.strip() and _is_sensitive_key(k):
+                out[k] = REDACTED
+            else:
+                out[k] = _redact(v)
+        return out
+    if isinstance(obj, list):
+        return [_redact(x) for x in obj]
+    return obj
+
 
 
 class ConfigBackupPlugin(Star):
@@ -66,10 +96,18 @@ class ConfigBackupPlugin(Star):
     def _do_backup(self) -> tuple[str, int, int]:
         files = self._collect()
         with_db = bool(self.cfg.get("include_db", False))
+        include_sensitive = bool(self.cfg.get("include_sensitive", False))
+        if with_db and not include_sensitive:
+            logger.info(TAG + " 未开启敏感信息备份，跳过数据库（含对话内容）")
+            with_db = False
         if not files and not with_db:
             raise RuntimeError("没有找到可备份的配置文件")
 
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(BACKUP_DIR, 0o700)
+        except OSError:
+            pass
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         final = BACKUP_DIR / ("config-%s.zip" % stamp)
         tmp = BACKUP_DIR / (".config-%s.zip.tmp" % stamp)
@@ -78,18 +116,37 @@ class ConfigBackupPlugin(Star):
         try:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
                 for p in files:
-                    zf.write(p, str(p.relative_to(DATA_DIR)))
+                    arcname = str(p.relative_to(DATA_DIR))
+                    if include_sensitive:
+                        zf.write(p, arcname)
+                    else:
+                        self._write_redacted(zf, p, arcname)
                     count += 1
                 if with_db and DB_PATH.exists():
                     self._write_db(zf)
                     count += 1
             shutil.move(str(tmp), str(final))
+            try:
+                os.chmod(final, 0o600)
+            except OSError:
+                pass
         finally:
             if tmp.exists():
                 tmp.unlink()
 
         self._prune()
         return final.name, final.stat().st_size, count
+
+    def _write_redacted(self, zf: zipfile.ZipFile, p: Path, arcname: str):
+        """把 JSON 中的密钥类字段替换为占位符后再写入 zip。"""
+        raw = p.read_text(encoding="utf-8-sig")
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            logger.warning("%s %s 不是合法 JSON，按原文备份", TAG, arcname)
+            zf.writestr(arcname, raw)
+            return
+        zf.writestr(arcname, json.dumps(_redact(data), ensure_ascii=False, indent=2))
 
     def _write_db(self, zf: zipfile.ZipFile):
         """用 SQLite 在线备份接口导出，避免直接拷贝正在写入的库文件。"""
@@ -128,9 +185,11 @@ class ConfigBackupPlugin(Star):
         """立即执行一次配置备份"""
         try:
             name, size, count = await asyncio.to_thread(self._do_backup)
+            mode = ("含敏感信息" if bool(self.cfg.get("include_sensitive", False))
+                    else "已脱敏")
             yield event.plain_result(
-                "配置备份完成\n文件: %s\n内容: %d 个文件\n大小: %.1f KB\n目录: %s"
-                % (name, count, size / 1024, BACKUP_DIR)
+                "配置备份完成\n文件: %s\n内容: %d 个文件（%s）\n大小: %.1f KB\n目录: %s"
+                % (name, count, mode, size / 1024, BACKUP_DIR)
             )
         except Exception as e:
             yield event.plain_result("配置备份失败: %s: %s" % (type(e).__name__, e))

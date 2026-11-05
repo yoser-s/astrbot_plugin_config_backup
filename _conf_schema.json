@@ -22,9 +22,15 @@
     "type": "bool",
     "default": true
   },
+  "include_sensitive": {
+    "description": "备份敏感信息",
+    "hint": "默认关闭：api_key / token / secret / password 等字段会替换为 ***REDACTED***，且不打包数据库。开启后备份为明文，含 API Key、jwt_secret 和对话记录，请自行保证备份目录权限。",
+    "type": "bool",
+    "default": false
+  },
   "include_db": {
     "description": "同时备份数据库",
-    "hint": "勾选后把 data_v4.db（对话记录、记忆库）一起打包，使用 SQLite 在线备份，不会拷到写了一半的库",
+    "hint": "勾选后把 data_v4.db（对话记录、记忆库）一起打包，使用 SQLite 在线备份，不会拷到写了一半的库。仅在开启「备份敏感信息」时生效",
     "type": "bool",
     "default": false
   },
