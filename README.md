@@ -18,13 +18,16 @@
 
 ## 安装
 
-把整个目录放进 AstrBot 的插件目录：
+把整个目录放进 AstrBot 数据目录下的 `plugins`：
 
 ```
-/vol1/1000/docker/astrbot/data/plugins/astrbot_plugin_config_backup/
+<AstrBot 数据目录>/plugins/astrbot_plugin_config_backup/
 ```
 
-或者在 WebUI 的「插件」页面里从仓库地址安装。放好后重启 AstrBot（`docker restart astrbot`，不要 `docker compose up -d`），插件会自动加载。
+下文用 `$ASTRBOT_DATA` 指代你的数据目录。常见 Docker 部署下它是 `data` 卷挂载出来的目录，例如 `/vol1/1000/docker/astrbot/data`，但请以自己的 `docker-compose.yml` 挂载为准。
+
+或者在 WebUI 的「插件」页面里从仓库地址安装。放好后重启 AstrBot（`docker restart <容器名>`，不要 `docker compose up -d`），插件会自动加载。下文用 `$CONTAINER` 指代你的 AstrBot 容器名，默认示例为 `astrbot`。
+
 
 依赖：仅使用 Python 标准库（`zipfile`、`sqlite3`、`asyncio`），无需 `pip install`。
 
@@ -60,7 +63,7 @@ WebUI → 插件 → astrbot_plugin_config_backup → 配置：
 ## 文件位置
 
 ```
-/vol1/1000/docker/astrbot/data/backups/config/
+$ASTRBOT_DATA/backups/config/
 ├── config-20261105-085128.zip   # 仅配置，约 45 KB
 └── config-20261105-085850.zip   # 含数据库，约 20 MB
 ```
@@ -81,24 +84,29 @@ data_v4.db                     # 仅在开启数据库备份时存在
 
 AstrBot 启动时把配置读进内存，停止的那一刻会把内存里的配置写回 `cmd_config.json`。你在容器运行时覆盖，文件会被它关停时的回写覆盖掉，看起来恢复了，重启后又变回原样。数据库文件更严重：运行中覆盖可能导致库损坏。
 
-下面是最短的可靠流程。
+下面是最短的可靠流程。开始前先在一个 shell 里定义两个变量，后面所有命令都用它们：
+
+```bash
+ASTRBOT_DATA=/path/to/astrbot/data   # 换成你的数据目录
+CONTAINER=astrbot                   # 换成你的容器名
+```
 
 ### 1. 先查看有哪些备份
 
 ```bash
-ls -la --time-style=full-iso /vol1/1000/docker/astrbot/data/backups/config/
+ls -la --time-style=full-iso "$ASTRBOT_DATA/backups/config/"
 ```
 
 ### 2. 停容器
 
 ```bash
-docker stop astrbot
+docker stop "$CONTAINER"
 ```
 
 确认容器真的停了：
 
 ```bash
-docker ps -a --filter name=astrbot
+docker ps -a --filter "name=$CONTAINER"
 ```
 
 `STATUS` 应该是 `Exited (0)`。
@@ -106,7 +114,7 @@ docker ps -a --filter name=astrbot
 ### 3. 备份当前状态（保险用，强烈建议）
 
 ```bash
-cd /vol1/1000/docker/astrbot/data
+cd "$ASTRBOT_DATA"
 cp -a cmd_config.json cmd_config.json.before-restore
 cp -a config config.before-restore
 ```
@@ -114,14 +122,14 @@ cp -a config config.before-restore
 ### 4. 解压备份
 
 ```bash
-cd /vol1/1000/docker/astrbot/data
-unzip -o /vol1/1000/docker/astrbot/data/backups/config/config-20261105-085850.zip
+cd "$ASTRBOT_DATA"
+unzip -o backups/config/config-20261105-085850.zip
 ```
 
 只想恢复某一个文件时，单独解压即可，例如只恢复核心配置：
 
 ```bash
-cd /vol1/1000/docker/astrbot/data
+cd "$ASTRBOT_DATA"
 unzip -o backups/config/config-20261105-085850.zip cmd_config.json
 ```
 
@@ -130,16 +138,16 @@ unzip -o backups/config/config-20261105-085850.zip cmd_config.json
 SQLite 在 WAL 模式下运行时会在库旁边生成 `data_v4.db-wal` 和 `data_v4.db-shm`。用旧备份替换 `data_v4.db` 后，如果这两个残留文件还在，新的库会带着旧 WAL 一起启动，可能出现数据错乱。所以恢复数据库时要一并删掉：
 
 ```bash
-cd /vol1/1000/docker/astrbot/data
+cd "$ASTRBOT_DATA"
 rm -f data_v4.db-wal data_v4.db-shm
 ```
 
 ### 6. 启动并验证
 
 ```bash
-docker start astrbot
+docker start "$CONTAINER"
 sleep 30
-docker logs astrbot --since 1m 2>&1 | grep -E "AstrBot v|WebUI is ready|ERROR"
+docker logs "$CONTAINER" --since 1m 2>&1 | grep -E "AstrBot v|WebUI is ready|ERROR"
 ```
 
 看到 `AstrBot vX.Y.Z` 和 `WebUI is ready` 就说明起来了。然后打开 WebUI，检查：
@@ -152,11 +160,11 @@ docker logs astrbot --since 1m 2>&1 | grep -E "AstrBot v|WebUI is ready|ERROR"
 ### 7. 如果恢复后不满意，退回原状态
 
 ```bash
-docker stop astrbot
-cd /vol1/1000/docker/astrbot/data
+docker stop "$CONTAINER"
+cd "$ASTRBOT_DATA"
 cp -a cmd_config.json.before-restore cmd_config.json
 rm -rf config && cp -a config.before-restore config
-docker start astrbot
+docker start "$CONTAINER"
 ```
 
 ## 为什么恢复要停容器，而不是让插件自己恢复
